@@ -722,7 +722,8 @@ jobs:
           yes "" | make oldconfig
 
           # 修改 EXTRAVERSION 以匹配 Synology kernel 版本格式
-          sed -i "s/EXTRAVERSION = /EXTRAVERSION = +/g" Makefile
+          # 確保版本號帶有 "+" 後綴 (例如 4.4.302+)
+          sed -i 's/^EXTRAVERSION =.*/EXTRAVERSION = +/' Makefile
 
           # 準備 kernel headers 和編譯工具
           # 這些步驟為外部模組編譯準備必要的檔案和腳本
@@ -766,6 +767,10 @@ jobs:
           export ARCH=${KERNEL_ARCH}
           echo "Compiling module with ARCH=${ARCH}"
           make -j$(nproc) CROSS_COMPILE=${CROSS_COMPILE} -C ${KERNEL_SRC} M=$PWD modules
+
+          # 瘦身模組：移除除錯資訊以大幅縮小檔案體積 (8MB -> 400KB)
+          echo "Stripping debug symbols from module..."
+          ${CROSS_COMPILE}strip --strip-debug atlantic.ko
 
       - name: 上傳 .ko 模組為 Artifacts
         uses: actions/upload-artifact@v5
