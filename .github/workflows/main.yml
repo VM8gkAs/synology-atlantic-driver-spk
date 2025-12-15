@@ -704,13 +704,23 @@ jobs:
       - name: 啟動 Synology 內核編譯功能
         run: |
           # 設定交叉編譯環境變數
+          CC_PREFIX="${PWD}/${ARCH_FINDED}-pc-linux-gnu/bin/${ARCH_FINDED}-pc-linux-gnu-"
           echo "KERNEL_SRC=${PWD}/linux-${KERNEL_VER_SERIES}.x" >> $GITHUB_ENV
           echo "TOOLCHAIN_DIR=${PWD}/${ARCH_FINDED}-pc-linux-gnu/" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=${PWD}/${ARCH_FINDED}-pc-linux-gnu/bin/${ARCH_FINDED}-pc-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=${CC_PREFIX}" >> $GITHUB_ENV
           echo "${PWD}/${ARCH_FINDED}-pc-linux-gnu/bin" >> $GITHUB_PATH
 
           # 準備 kernel 編譯環境
           cd linux-${KERNEL_VER_SERIES}.x
+
+          # 設定編譯環境變數 (重要：必須在任何 make 指令前設定)
+          if [ -z "$KERNEL_ARCH" ]; then
+            echo "::warning::KERNEL_ARCH is empty, setting to x86"
+            KERNEL_ARCH="x86"
+          fi
+          export ARCH=${KERNEL_ARCH}
+          export CROSS_COMPILE=${CC_PREFIX}
+          echo "Building kernel with ARCH=${ARCH} and CROSS_COMPILE=${CROSS_COMPILE}"
 
           # 複製 Synology 官方 kernel 配置
           cp synoconfigs/${CPU_SERIES} .config
@@ -727,13 +737,6 @@ jobs:
 
           # 準備 kernel headers 和編譯工具
           # 這些步驟為外部模組編譯準備必要的檔案和腳本
-          echo "DEBUG: About to use KERNEL_ARCH='$KERNEL_ARCH' for kernel build"
-          if [ -z "$KERNEL_ARCH" ]; then
-            echo "::warning::KERNEL_ARCH is empty, setting to x86"
-            KERNEL_ARCH="x86"
-          fi
-          export ARCH=${KERNEL_ARCH}
-          echo "Building kernel with ARCH=${ARCH}"
           make clean
           make -j$(nproc) prepare    # 生成必要的標頭檔
           make -j$(nproc) scripts    # 編譯 kernel 輔助腳本
@@ -759,18 +762,23 @@ jobs:
             echo "::error::KERNEL_SRC is not set, cannot compile module"
             exit 1
           fi
-          echo "DEBUG: About to use KERNEL_ARCH='$KERNEL_ARCH' for module build"
+          
           if [ -z "$KERNEL_ARCH" ]; then
             echo "::warning::KERNEL_ARCH is empty, setting to x86"
             KERNEL_ARCH="x86"
           fi
           export ARCH=${KERNEL_ARCH}
-          echo "Compiling module with ARCH=${ARCH}"
-          make -j$(nproc) CROSS_COMPILE=${CROSS_COMPILE} -C ${KERNEL_SRC} M=$PWD modules
+          
+          # 確保使用正確的交叉編譯器
+          # 注意：必須明確指定 CROSS_COMPILE，否則可能回退到系統 GCC (導致 Retpoline 不相容)
+          CC_PREFIX="${PWD}/../../${ARCH_FINDED}-pc-linux-gnu/bin/${ARCH_FINDED}-pc-linux-gnu-"
+          echo "Compiling module with ARCH=${ARCH} and CROSS_COMPILE=${CC_PREFIX}"
+          
+          make -j$(nproc) CROSS_COMPILE=${CC_PREFIX} -C ${KERNEL_SRC} M=$PWD modules
 
           # 瘦身模組：移除除錯資訊以大幅縮小檔案體積 (8MB -> 400KB)
           echo "Stripping debug symbols from module..."
-          ${CROSS_COMPILE}strip --strip-debug atlantic.ko
+          ${CC_PREFIX}strip --strip-debug atlantic.ko
 
       - name: 上傳 .ko 模組為 Artifacts
         uses: actions/upload-artifact@v5
